@@ -29,8 +29,13 @@ local dbg
 local COLOR_RED = ""
 local COLOR_BLUE = ""
 local COLOR_RESET = ""
+local byte = string.byte
+local strlit = {lit="\0\a\b\f\r\t\v\\\"\'", tr="0abfrtv\\\"\'", [byte("\n")]="\\\n"}
+for i=1, #strlit.lit do strlit[byte(string.sub(strlit.lit, i, i))] = "\\"..string.sub(strlit.tr, i, i) end
+for i=127, 255       do strlit[i] = string.format("\\%03d", i) end
+for i=1, 31          do strlit[i] = strlit[i] or string.format("\\%03d", i) end
 
-local function pretty(obj, max_depth)
+local function pretty(obj, max_depth, raw)
 	if max_depth == nil then max_depth = dbg.pretty_depth end
 	
 	-- Returns true if a table has a __tostring metamethod.
@@ -42,8 +47,9 @@ local function pretty(obj, max_depth)
 	local function recurse(obj, depth)
 		if type(obj) == "string" then
 			-- Dump the string so that escape sequences are printed.
-			return string.format("%q", obj)
-		elseif type(obj) == "table" and depth < max_depth and not coerceable(obj) then
+			local r = string.gsub(obj, '[^%w%p ]', function(c) return strlit[byte(c)] or '<?>' end)
+                        return #r > 4096 and string.format('"%s..."(%d)', string.sub(r, 1, 4096), #r) or '"'..r..'"'
+		elseif type(obj) == "table" and depth < max_depth and (raw or not coerceable(obj)) then
 			local str = "{"
 			
 			for k, v in pairs(obj) do
@@ -73,6 +79,7 @@ d(own) - move down the stack by one frame
 w(here) [line count] - print source code around the current line
 e(val) [statement] - execute the statement
 p(rint) [expression] - execute the expression and print the result
+r(awprint) [expression] - like p(rint), but disregard tostring in metatable
 t(race) - print the stack trace
 l(ocals) - print the function arguments, locals and upvalues.
 h(elp) - print this message
@@ -288,8 +295,8 @@ function cmd_finish()
 	return true, offset < 0 and hook_factory(offset - 1) or hook_finish
 end
 
-local function cmd_print(expr)
-	local env = local_bindings(1, true)
+local function cmd_print(expr, raw)
+	local env = local_bindings(raw and 2 or 1, true)
 	local chunk = compile_chunk("return "..expr, env)
 	if chunk == nil then return false end
 	
@@ -302,7 +309,7 @@ local function cmd_print(expr)
 	else
 		local output = ""
 		for i = 2, results.n do
-			output = output..(i ~= 2 and ", " or "")..pretty(results[i])
+ 			output = output..(i ~= 2 and ", " or "")..pretty(results[i], nil, raw)
 		end
 		
 		if output == "" then output = "<no result>" end
@@ -310,6 +317,10 @@ local function cmd_print(expr)
 	end
 	
 	return false
+end
+
+local function cmd_printraw(expr)
+   return cmd_print(expr, true)
 end
 
 local function cmd_eval(code)
@@ -426,6 +437,7 @@ local function match_command(line)
 		["n"] = cmd_next,
 		["f"] = cmd_finish,
 		["p (.*)"] = cmd_print,
+		["r (.*)"] = cmd_printraw,
 		["e (.*)"] = cmd_eval,
 		["u"] = cmd_up,
 		["d"] = cmd_down,
@@ -440,6 +452,14 @@ local function match_command(line)
 		local matches = {line:match("^("..cmd..")$")}
 		if matches[1] then return cmd_func, select(2, unpack(matches)) end
 	end
+end
+
+-- Try loading a chunk with a leading return.
+local function is_expression(block)
+	if _VERSION <= "Lua 5.1" then
+		return loadstring("return "..block, "") ~= nil
+	end
+	return load("return "..block, "", "t") ~= nil
 end
 
 -- Run a command line
@@ -462,6 +482,9 @@ local function run_command(line)
 		dbg_writeln(COLOR_RED.."Error:"..COLOR_RESET.." command '%s' not recognized.\nType 'h' and press return for a command list.", line)
 		return false
 	end
+	
+	-- Evaluate the chunk appropriately.
+	if is_expression(line) then cmd_print(line) else cmd_eval(line) end
 end
 
 repl = function()
