@@ -1,3 +1,5 @@
+---- From: https://github.com/slembcke/debugger.lua
+----   and https://github.com/themadsens/debugger.lua
 --[[
 	Copyright (c) 2016 Scott Lembcke and Howling Moon Software
 	
@@ -394,6 +396,9 @@ end
 
 local function cmd_trace()
 	local location = format_stack_frame_info(debug.getinfo(stack_inspect_offset + CMD_STACK_LEVEL))
+        if dbg.last_err then
+           dbg_writeln(COLOR_RED.."Debugger stopped on:"..COLOR_RESET.."(%s)", dbg.last_err)
+        end
 	local message = string.format("Inspecting frame: %d - (%s)", stack_inspect_offset - stack_top, location)
 	local str = debug.traceback(message, stack_top + CMD_STACK_LEVEL)
 	
@@ -540,11 +545,18 @@ dbg.auto_where = false
 
 local lua_error, lua_assert = error, assert
 
+local function dbg_error(level, err)
+	dbg.last_err = err
+	dbg(false, level + 1)
+	dbg.last_err = nil
+end
+
+
 -- Works like error(), but invokes the debugger.
 function dbg.error(err, level)
 	level = level or 1
 	dbg_writeln(COLOR_RED.."Debugger stopped on error:"..COLOR_RESET.."(%s)", pretty(err))
-	dbg(false, level)
+	dbg_error(level, err)
 	
 	lua_error(err, level)
 end
@@ -553,7 +565,7 @@ end
 function dbg.assert(condition, message)
 	if not condition then
 		dbg_writeln(COLOR_RED.."Debugger stopped on "..COLOR_RESET.."assert(..., %s)", message)
-		dbg(false, 1)
+		dbg_error(1, pretty(err))
 	end
 	
 	lua_assert(condition, message)
@@ -563,7 +575,7 @@ end
 function dbg.call(f, ...)
 	return xpcall(f, function(err)
 		dbg_writeln(COLOR_RED.."Debugger stopped on error: "..COLOR_RESET..pretty(err))
-		dbg(false, 1)
+		dbg_error(1, pretty(err))
 		
 		return err
 	end, ...)
@@ -572,7 +584,7 @@ end
 -- Error message handler that can be used with lua_pcall().
 function dbg.msgh(...)
 	dbg_writeln(COLOR_RED.."Debugger stopped on error: "..COLOR_RESET..pretty(...))
-	dbg(false, 1)
+	dbg_error(1, pretty(...))
 	
 	return ...
 end
